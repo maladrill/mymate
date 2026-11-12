@@ -79,6 +79,20 @@ class HostProberTest extends TestCase
         $this->assertNull($result->credentialId);
     }
 
+    public function test_ssh_passwords_are_never_probed_without_a_trusted_host_key(): void
+    {
+        config()->set('mymate.routeros.tls_known_hosts', '');
+        Credential::factory()->ssh()->create([
+            'username' => 'test-probe-user',
+            'password' => 'test-probe-password',
+        ]);
+
+        $result = $this->prober(new FakeSnmpClient, new FakeRouterOsClient)
+            ->probe('192.0.2.90', Credential::all());
+
+        $this->assertNull($result->sshCredentialId);
+    }
+
     public function test_skips_credentials_with_no_secret(): void
     {
         // An SNMP cred with a blank community and a RouterOS cred with no username
