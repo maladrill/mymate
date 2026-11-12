@@ -151,6 +151,18 @@ class RouterOsTlsProvisioner
             // Verify both the server's self-signed trust anchor and its IP subjectAltName.
             $this->verifyEndpoint($host, $workDir.'/'.$certFile, $identity['fingerprint']);
 
+            // Do not report enrollment as successful while temporary unencrypted
+            // key material is still present in the RouterOS file store.
+            foreach ($remoteFiles as $remoteFile) {
+                $output = $ssh->execute('/file remove [find where name="'.$remoteFile.'"]; '.
+                    ':if ([:len [/file find where name="'.$remoteFile.'"]] != 0) do={:error "File cleanup failed"}; '.
+                    ':put "MYMATE_FILE_REMOVED"');
+                if (! str_contains($output, 'MYMATE_FILE_REMOVED')) {
+                    throw new RuntimeException('Temporary RouterOS private-file cleanup was not confirmed.');
+                }
+            }
+            $remoteFiles = [];
+
             // Save the public trust anchor atomically, without persisting private key material.
             $trustDir = storage_path('app/routeros-tls');
             if (! is_dir($trustDir) && ! mkdir($trustDir, 0700, true) && ! is_dir($trustDir)) {
