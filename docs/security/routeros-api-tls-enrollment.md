@@ -8,7 +8,7 @@ This feature is for centrally managed RouterOS 6/7 CPEs. It generates a **unique
 
 - Never bootstrap device trust through unsecured RouterOS API (TCP/8728).
 - The first SSH host key must be verified independently, for example during onsite provisioning or against an authenticated inventory. Do not automatically trust `ssh-keyscan` output.
-- A dedicated SSH credential with a **private key** must already be assigned to `ssh_credential_id` for the selected CPE.
+- A dedicated SSH credential may contain a **password or a private key**. If none is assigned, the device's existing RouterOS username/password is used for SSH enrollment. The username must have the required RouterOS permissions.
 - The SSH user requires sufficient access to import certificates, modify `/ip service`, and transfer/remove temporary files. Test an appropriately minimal RouterOS group on each supported version; do not automatically use the built-in `full` group.
 - The My Mate account generating the certificate must run on Linux with writable `/dev/shm` (tmpfs). If tmpfs is unavailable, provisioning fails closed.
 - Certificates are RSA-2048 for compatibility with older, resource-constrained devices. Key generation and signing occur on the server.
@@ -44,15 +44,15 @@ services:
       - ./secrets/routeros_known_hosts:/etc/mymate/routeros_known_hosts:ro
 ```
 
-Install `openssh-client` on source/.deb installations. The fork's Dockerfile includes it.
+Install the locked Composer dependencies (`composer install --no-dev --prefer-dist`) on source/.deb installations. Enrollment uses `phpseclib/phpseclib` version 3.x. The fork also includes `openssh-client` for other operational features.
 
-The private SSH login key is stored as an encrypted My Mate credential, assigned as the device's dedicated SSH credential. Use a passphrase-free, dedicated automation identity held in an access-controlled secret store; do not reuse personal operators' SSH keys. Its scope must be limited to the device and management network.
+SSH passwords and optional private keys are stored as encrypted My Mate credentials and decrypted only for the authentication attempt. Never put passwords in URLs, command-line arguments, environment variables, or logs. Prefer a dedicated per-CPE automation identity rather than personal administrators' passwords. Private keys may remain passphrase-protected; any associated passphrase is stored in the credential password field. Host-key pinning is mandatory regardless of the authentication method.
 
 ## Initiate enrollment
 
 1. Verify the CPE's SSH host key out-of-band; place it in the server's trusted `known_hosts`.
 2. Confirm that `api-ssl` listens on 8729 and either has no certificate or is intentionally left unconfigured. Existing certificate assignments are never overwritten.
-3. Add the CPE and its RouterOS credential to My Mate; assign its dedicated SSH key credential.
+3. Add the CPE and its RouterOS username/password to My Mate. Optionally assign a dedicated SSH password or private-key credential. A newly attached CPE does not need a preinstalled SSH user key.
 4. Configure the management source address and known-hosts file.
 5. Sign in as an administrator with a **verified passkey**. Open the CPE Overview and choose **Generate and install certificate**.
 6. The background `upgrade` queue performs the enrollment and updates the device's TLS state. It will not retry automatically after an unknown outcome.
@@ -69,7 +69,7 @@ This command deliberately never takes raw passwords, private key bytes, or a cer
 
 ## RouterOS behavior
 
-- The application uses legacy `scp -O` so older RouterOS devices do not require SFTP support.
+- The application uses phpseclib3's SSH and classic SCP transport. It does not depend on SFTP or `sshpass`. SSH host-key verification completes before any password or private-key authentication.
 - Import runs once for the public certificate and once for its private key.
 - Imported certificate selection is based on a random per-device common name.
 - The pre-existing `api-ssl` enabled state and access list are captured.
@@ -82,7 +82,7 @@ This command deliberately never takes raw passwords, private key bytes, or a cer
 
 Before production rollout, test on both RouterOS 6.49.x and supported RouterOS 7.x hardware:
 
-- Valid pinned SSH host key succeeds; unknown or changed host key fails.
+- Valid pinned SSH host key succeeds with either a password or a private key; unknown or changed host key fails BEFORE user authentication.
 - Unencrypted RouterOS API is refused by the application in production.
 - The certificate private key is generated on My Mate and imported on the CPE.
 - A correctly enrolled device can authenticate through verified API-SSL on 8729.
@@ -97,3 +97,9 @@ Before production rollout, test on both RouterOS 6.49.x and supported RouterOS 7
 The first trust anchor cannot be created securely from an unauthenticated connection. If the CPE has no verified SSH key or usable secured management channel, enrollment must be done through an independently authenticated provisioning process.
 
 The current implementation uses **individual self-signed certificates** trusted by exact certificate and IP. Future CA-based enrollment and renewal can be added without replacing the secure SSH bootstrap model.
+
+## First connection with a password
+
+Password authentication is supported without creating an SSH user key on the CPE. The operator first verifies and pins the **router's SSH host key** using a trusted provisioning process, registers a credential containing the SSH username and password (or uses the existing RouterOS credential if that login is SSH-enabled), and starts enrollment. My Mate verifies the pinned host key before sending the password. The certificate and TLS private key are generated on My Mate, imported by SSH/SCP, and verified over API-SSL. Use a segregated provisioning VLAN and do not accept unknown host keys automatically on the production management network.
+
+**Existing code:** `app/Services/Discovery/HostProber.php` already attempts SSH password login with `phpseclib3`; `app/Actions/Backup/RegisterBackupDevice.php` supports SSH passwords through Rusted. Enrollment now shares the encrypted credential model but uses its own pinned, client-side SSH transport.
