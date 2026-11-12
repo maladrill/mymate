@@ -37,7 +37,7 @@ export function RouterOsTlsPanel({ device }: { device: Device }) {
     function enroll() {
         if (!window.confirm(
             `Generate a new TLS private key on My Mate and install it on ${device.name} (${device.mgmt_ip}) over pinned SSH?\n\n` +
-            'The CPE must already have a trusted SSH host key and a dedicated SSH key credential.'
+            'The CPE must have a separately verified SSH host key and an SSH-usable password or private-key credential.'
         )) return;
         request.mutate();
     }
@@ -63,14 +63,14 @@ export function RouterOsTlsPanel({ device }: { device: Device }) {
                     <button
                         type="button"
                         onClick={enroll}
-                        disabled={running || request.isPending || device.ssh_credential_id === null}
+                        disabled={running || request.isPending || (device.ssh_credential_id === null && device.credential_id === null)}
                         className="rounded-lg bg-emerald-500/15 px-3 py-2 text-xs font-medium text-emerald-300 ring-1 ring-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         {running ? 'Enrolling...' : 'Generate and install certificate'}
                     </button>
                 )}
-                {!enrolled && device.ssh_credential_id === null && user?.is_admin && (
-                    <p className="text-amber-300">Assign a dedicated SSH key credential before enrollment.</p>
+                {!enrolled && device.ssh_credential_id === null && device.credential_id === null && user?.is_admin && (
+                    <p className="text-amber-300">Assign an SSH password or key credential, or a RouterOS credential usable for SSH.</p>
                 )}
                 <p className="text-white/35">
                     Certificate generation runs on My Mate. Transfer uses authenticated SSH/SCP; no plaintext RouterOS API is used.
