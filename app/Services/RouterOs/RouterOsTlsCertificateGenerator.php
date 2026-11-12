@@ -13,19 +13,20 @@ use RuntimeException;
  */
 class RouterOsTlsCertificateGenerator
 {
-    /** @return array{certificate:string,private_key:string,fingerprint:string,expires_at:int} */
+    /** @return array{certificate:string,private_key:string,fingerprint:string,expires_at:int,name:string} */
     public function issue(string $ip, string $workDir): array
     {
         if (filter_var($ip, FILTER_VALIDATE_IP) === false) {
             throw new RuntimeException('A valid management IP is required for certificate issuance.');
         }
 
+        $name = 'mymate-'.bin2hex(random_bytes(12));
         $configPath = $workDir.'/openssl.cnf';
         $config = "[ req ]\n".
             "distinguished_name = subject\n".
             "prompt = no\n".
             "[ subject ]\n".
-            "CN = {$ip}\n".
+            "CN = {$name}\n".
             "[ leaf ]\n".
             "basicConstraints = critical,CA:FALSE\n".
             "keyUsage = critical,digitalSignature,keyEncipherment\n".
@@ -44,7 +45,7 @@ class RouterOsTlsCertificateGenerator
         }
 
         $options = ['config' => $configPath, 'digest_alg' => 'sha256'];
-        $csr = openssl_csr_new(['commonName' => $ip], $key, $options + ['req_extensions' => 'leaf']);
+        $csr = openssl_csr_new(['commonName' => $name], $key, $options + ['req_extensions' => 'leaf']);
         if ($csr === false) {
             throw new RuntimeException('Could not generate the RouterOS certificate request.');
         }
@@ -66,6 +67,7 @@ class RouterOsTlsCertificateGenerator
         }
 
         return [
+            'name' => $name,
             'certificate' => $pem,
             'private_key' => $privateKey,
             'fingerprint' => strtolower($fingerprint),
