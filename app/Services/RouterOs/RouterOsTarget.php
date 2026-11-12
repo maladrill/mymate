@@ -55,7 +55,7 @@ final readonly class RouterOsTarget
                 throw new RouterOsClientException('The RouterOS trust anchor has been modified.');
             }
             $port = 8729;
-        } elseif ($port !== 8729 && (bool) config('mymate.routeros.require_tls', false)) {
+        } elseif ($port !== 8729 && (bool) config('mymate.routeros.require_tls', true)) {
             throw new RouterOsClientException('Plaintext RouterOS API is disabled by security policy.');
         }
 
