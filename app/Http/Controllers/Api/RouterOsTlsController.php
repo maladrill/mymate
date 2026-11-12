@@ -9,6 +9,7 @@ use App\Models\Device;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Laravel\Sanctum\PersonalAccessToken;
 
 /**
  * Starts administrator-approved certificate enrollment.
@@ -20,6 +21,13 @@ class RouterOsTlsController extends Controller
 {
     public function store(Request $request, Device $device): JsonResponse
     {
+        // Enrollment changes the management trust boundary: require a live MFA session,
+        // never an unattended bearer token or an admin password alone.
+        if ($request->user()->currentAccessToken() instanceof PersonalAccessToken
+            || ! $request->user()->passkeys()->exists()
+            || ! ($request->hasSession() && $request->session()->get('passkey_verified', false))) {
+            return response()->json(['message' => 'A verified passkey session is required for certificate enrollment.'], 403);
+        }
         if ($device->poll_method !== PollMethod::RouterOs || $device->agent_id !== null
             || ! filter_var($device->mgmt_ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
             return response()->json(['message' => 'Only centrally managed IPv4 RouterOS devices can be enrolled.'], 422);
