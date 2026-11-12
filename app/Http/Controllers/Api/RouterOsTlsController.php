@@ -8,6 +8,7 @@ use App\Jobs\RouterOsTlsEnrollJob;
 use App\Models\Device;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Starts administrator-approved certificate enrollment.
@@ -39,16 +40,28 @@ class RouterOsTlsController extends Controller
             return response()->json(['message' => 'A dedicated SSH key credential is required.'], 422);
         }
 
-        if (in_array($device->routeros_tls_status, ['queued', 'running'], true)
-            && $device->routeros_tls_attempted_at?->greaterThan(now()->subMinutes(30))) {
-            return response()->json(['message' => 'Enrollment is already in progress.'], 409);
-        }
+        // Row lock makes two simultaneous POSTs unable to enqueue duplicate jobs.
+        $claimed = DB::transaction(function () use ($device): bool {
+            $locked = Device::whereKey($device->id)->lockForUpdate()->firstOrFail();
+            if ($locked->routeros_tls_enrolled_at !== null) {
+                return false;
+            }
+            if (in_array($locked->routeros_tls_status, ['queued', 'running'], true)
+                && $locked->routeros_tls_attempted_at?->greaterThan(now()->subMinutes(30))) {
+                return false;
+            }
+            $locked->forceFill([
+                'routeros_tls_status' => 'queued',
+                'routeros_tls_attempted_at' => now(),
+                'routeros_tls_error' => null,
+            ])->save();
 
-        $device->forceFill([
-            'routeros_tls_status' => 'queued',
-            'routeros_tls_attempted_at' => now(),
-            'routeros_tls_error' => null,
-        ])->save();
+            return true;
+        });
+
+        if (! $claimed) {
+            return response()->json(['message' => 'Enrollment is already pending or completed.'], 409);
+        }
 
         RouterOsTlsEnrollJob::dispatch($device->id, (int) $request->user()->id)->afterCommit();
 
