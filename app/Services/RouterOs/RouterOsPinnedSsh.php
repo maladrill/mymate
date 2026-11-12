@@ -126,7 +126,8 @@ class RouterOsPinnedSsh
                 throw new RuntimeException('The RouterOS SSH command did not complete.');
             }
             $status = $this->ssh->getExitStatus();
-            if ($status !== null && $status !== 0) {
+            // RouterOS may omit the SSH exit-status message (phpseclib returns false).
+            if ($status !== false && $status !== null && $status !== 0) {
                 throw new RuntimeException('The RouterOS SSH command failed.');
             }
 
