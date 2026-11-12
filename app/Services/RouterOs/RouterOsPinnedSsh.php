@@ -2,81 +2,159 @@
 
 namespace App\Services\RouterOs;
 
+use phpseclib3\Crypt\PublicKeyLoader;
+use phpseclib3\Net\SCP;
 use RuntimeException;
-use Symfony\Component\Process\Process;
+use Throwable;
 
 /**
- * Runs RouterOS SSH and legacy SCP with strict, pre-provisioned host-key checking.
+ * Authenticated RouterOS SSH/SCP transport.
  *
- * No passwords or keys appear in process arguments, logs, or API responses.
- * In particular, never use ssh-keyscan output as an automatically trusted key.
+ * The server host key is matched against a pre-verified OpenSSH known_hosts entry
+ * before ANY user credential is transmitted. Passwords and private keys remain in
+ * process memory; neither is passed to a shell or written to a process argument.
  */
 class RouterOsPinnedSsh
 {
+    private SCP $ssh;
+
     public function __construct(
-        private string $host,
-        private string $username,
-        private string $keyPath,
-        private string $knownHostsPath,
-        private int $port = 22,
+        string $host,
+        string $username,
+        ?string $privateKey,
+        ?string $password,
+        string $knownHostsPath,
+        int $port = 22,
     ) {
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false
             || ! preg_match('/^[A-Za-z0-9_.+-]{1,128}$/D', $username)
             || $port < 1 || $port > 65535) {
             throw new RuntimeException('Invalid RouterOS SSH target.');
         }
-        if (! is_file($keyPath) || ! is_file($knownHostsPath)
-            || ! is_readable($keyPath) || ! is_readable($knownHostsPath)
-            || filesize($knownHostsPath) === 0) {
-            throw new RuntimeException('SSH identity and trusted known_hosts file are required.');
+
+        if (! is_file($knownHostsPath) || ! is_readable($knownHostsPath)
+            || is_link($knownHostsPath) || ((fileperms($knownHostsPath) ?: 0) & 0022) !== 0) {
+            throw new RuntimeException('A secure, pre-verified SSH known_hosts file is required.');
         }
+        $knownHosts = file_get_contents($knownHostsPath);
+        if (! is_string($knownHosts) || strlen($knownHosts) < 20 || strlen($knownHosts) > 1048576) {
+            throw new RuntimeException('The SSH known_hosts file is empty or too large.');
+        }
+
+        if (! class_exists(SCP::class)) {
+            throw new RuntimeException('The phpseclib SSH/SCP dependency is unavailable.');
+        }
+
+        $ssh = new SCP($host, $port, 10);
+        $ssh->setTimeout(45);
+
+        try {
+            $serverKey = $ssh->getServerPublicHostKey();
+            if (! is_string($serverKey) || ! self::hostKeyMatches($knownHosts, $host, $port, $serverKey)) {
+                throw new RuntimeException('The RouterOS SSH host key is unknown or does not match the trusted key.');
+            }
+
+            // Prefer the explicitly configured private key; never silently downgrade
+            // to password login if key authentication was configured but failed.
+            if ($privateKey !== null && $privateKey !== '') {
+                $key = PublicKeyLoader::load($privateKey, $password ?? '');
+                $authenticated = $ssh->login($username, $key);
+            } elseif ($password !== null && $password !== '') {
+                $authenticated = $ssh->login($username, $password);
+            } else {
+                throw new RuntimeException('SSH password or private key is required.');
+            }
+
+            if (! $authenticated) {
+                throw new RuntimeException('RouterOS SSH authentication failed.');
+            }
+        } catch (Throwable $e) {
+            $ssh->disconnect();
+            if ($e instanceof RuntimeException) {
+                throw $e;
+            }
+            throw new RuntimeException('RouterOS SSH setup failed.', 0, $e);
+        }
+
+        $this->ssh = $ssh;
     }
 
-    /** @return array<int, string> */
-    private function options(): array
+    /**
+     * Match the actual SSH host public key blob against a pinned known_hosts entry.
+     *
+     * No wildcard, hashed-name, CA, or SSH host-certificate entries are accepted.
+     * Operators must verify and explicitly pin the CPE public host key out-of-band.
+     */
+    public static function hostKeyMatches(string $knownHosts, string $host, int $port, string $serverKey): bool
     {
-        return [
-            '-o', 'BatchMode=yes',
-            '-o', 'IdentitiesOnly=yes',
-            '-o', 'StrictHostKeyChecking=yes',
-            '-o', 'UserKnownHostsFile='.$this->knownHostsPath,
-            '-o', 'GlobalKnownHostsFile=/dev/null',
-            '-o', 'ConnectTimeout=10',
-            '-o', 'NumberOfPasswordPrompts=0',
-            '-o', 'LogLevel=ERROR',
-            '-i', $this->keyPath,
-        ];
+        $parts = preg_split('/\s+/', trim($serverKey));
+        if (! is_array($parts) || count($parts) < 2) {
+            return false;
+        }
+        $actual = base64_decode($parts[1], true);
+        if ($actual === false || strlen($actual) < 32) {
+            return false;
+        }
+        $expectedHost = $port === 22 ? $host : '['.$host.']:'.$port;
+
+        foreach (preg_split('/\R/', $knownHosts) ?: [] as $line) {
+            $fields = preg_split('/\s+/', trim($line));
+            if (! is_array($fields) || count($fields) < 3
+                || str_starts_with($fields[0], '#')
+                || str_starts_with($fields[0], '@')) {
+                continue;
+            }
+            if (! in_array($expectedHost, explode(',', $fields[0]), true)) {
+                continue;
+            }
+
+            $pinned = base64_decode($fields[2], true);
+            if ($pinned !== false && strlen($pinned) >= 32
+                && hash_equals(hash('sha256', $pinned), hash('sha256', $actual))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function execute(string $command): string
     {
-        $args = ['ssh', ...$this->options(), '-p', (string) $this->port,
-            '-l', $this->username, $this->host, $command];
+        try {
+            $result = $this->ssh->exec($command);
+            if (! is_string($result)) {
+                throw new RuntimeException('The RouterOS SSH command did not complete.');
+            }
+            $status = $this->ssh->getExitStatus();
+            if ($status !== null && $status !== 0) {
+                throw new RuntimeException('The RouterOS SSH command failed.');
+            }
 
-        return $this->run($args);
+            return trim($result);
+        } catch (Throwable $e) {
+            throw new RuntimeException('RouterOS SSH command execution failed.', 0, $e);
+        }
     }
 
     public function upload(string $localFile, string $remoteFile): void
     {
-        // The remote path is deliberately flat, random, and contains no shell metacharacters.
-        if (! preg_match('/^[A-Za-z0-9_-]+[.](crt|key)$/D', $remoteFile)) {
-            throw new RuntimeException('Invalid temporary RouterOS file name.');
+        if (! preg_match('/^[A-Za-z0-9_-]+[.](crt|key)$/D', $remoteFile)
+            || ! is_file($localFile) || ! is_readable($localFile)) {
+            throw new RuntimeException('Invalid RouterOS certificate transfer.');
         }
-        $args = ['scp', '-O', ...$this->options(), '-P', (string) $this->port,
-            $localFile, $this->username.'@'.$this->host.':'.$remoteFile];
-        $this->run($args);
+        try {
+            if (! $this->ssh->put($remoteFile, $localFile, SCP::SOURCE_LOCAL_FILE)) {
+                throw new RuntimeException('The RouterOS SCP upload failed.');
+            }
+        } catch (Throwable $e) {
+            throw new RuntimeException('RouterOS SCP upload failed.', 0, $e);
+        }
     }
 
-    private function run(array $arguments): string
+    public function __destruct()
     {
-        $process = new Process($arguments);
-        $process->setTimeout(45);
-        $process->run();
-        if (! $process->isSuccessful()) {
-            // SSH/SCP error details can include remote output; never echo them into the UI.
-            throw new RuntimeException('Pinned SSH/SCP operation failed (exit '.$process->getExitCode().').');
+        if (isset($this->ssh)) {
+            $this->ssh->disconnect();
         }
-
-        return trim($process->getOutput());
     }
 }
