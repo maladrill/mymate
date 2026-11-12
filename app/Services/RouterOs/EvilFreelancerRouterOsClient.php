@@ -14,6 +14,9 @@ class EvilFreelancerRouterOsClient implements RouterOsClient
 {
     public function open(RouterOsTarget $target): RouterOsConnection
     {
+        if (! $target->ssl && (bool) config('mymate.routeros.require_tls', true)) {
+            throw new RouterOsClientException('Plaintext RouterOS API is disabled by security policy.');
+        }
         try {
             $client = new Client([
                 'host' => $target->host,
