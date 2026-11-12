@@ -422,6 +422,9 @@ return [
         // Must be populated with host keys verified independently of this connection.
         'tls_known_hosts' => env('MYMATE_ROUTEROS_SSH_KNOWN_HOSTS', ''),
         'tls_ssh_port' => (int) env('MYMATE_ROUTEROS_SSH_PORT', 22),
+        // Management source address actually used by My Mate on the CPE-facing network.
+        'tls_manager_ip' => env('MYMATE_ROUTEROS_MANAGER_IP', ''),
+
     ],
 
     // Remote agents (probes on a customer's management network). The hub pings each connected
