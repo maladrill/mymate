@@ -7,6 +7,7 @@ use App\Models\Credential;
 use App\Services\RouterOs\RouterOsClient;
 use App\Services\RouterOs\RouterOsClientException;
 use App\Services\RouterOs\RouterOsTarget;
+use App\Services\RouterOs\RouterOsPinnedSsh;
 use App\Services\Snmp\SnmpClient;
 use App\Services\Snmp\SnmpClientException;
 use Illuminate\Support\Collection;
@@ -71,11 +72,17 @@ class HostProber
      */
     private function probeSsh(string $ip, Collection $creds): ?int
     {
-        $timeout = max(1, (int) config('mymate.discovery.ssh_probe_timeout_s', 4));
-        $first = true;
+        // The original SSH credential probe logged in BEFORE checking a server
+        // host key. Never send user passwords or private keys to an unpinned host.
+        $knownHosts = config('mymate.routeros.tls_known_hosts');
+        if (! is_string($knownHosts) || $knownHosts === '' || ! is_file($knownHosts)
+            || ! is_readable($knownHosts)) {
+            return null;
+        }
 
+        $first = true;
         foreach ($creds as $cred) {
-            if (! $cred->username) {
+            if (! $cred->username || (! $cred->password && ! $cred->private_key)) {
                 continue;
             }
             if (! $first && $this->attemptDelayMs > 0) {
@@ -84,28 +91,19 @@ class HostProber
             $first = false;
 
             try {
-                $ssh = new \phpseclib3\Net\SSH2($ip, 22, $timeout);
-                $ssh->setTimeout($timeout);
+                // The constructor validates the remote host key BEFORE login.
+                new RouterOsPinnedSsh(
+                    $ip,
+                    (string) $cred->username,
+                    (string) ($cred->private_key ?? ''),
+                    (string) ($cred->password ?? ''),
+                    $knownHosts,
+                    (int) config('mymate.routeros.tls_ssh_port', 22),
+                );
 
-                $ok = false;
-                if ($cred->private_key) {
-                    try {
-                        $key = \phpseclib3\Crypt\PublicKeyLoader::load((string) $cred->private_key, (string) ($cred->password ?? ''));
-                        $ok = $ssh->login((string) $cred->username, $key);
-                    } catch (\Throwable) {
-                        $ok = false; // unloadable/mismatched key - fall through to password below
-                    }
-                }
-                if (! $ok && $cred->password) {
-                    $ok = $ssh->login((string) $cred->username, (string) $cred->password);
-                }
-                $ssh->disconnect();
-
-                if ($ok) {
-                    return (int) $cred->id;
-                }
+                return (int) $cred->id;
             } catch (\Throwable) {
-                // Port 22 filtered/closed, connect timeout, or protocol error - try the next cred.
+                // Unknown host, wrong credential, timeout or refused SSH: try next.
             }
         }
 
