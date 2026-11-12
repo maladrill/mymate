@@ -42,6 +42,11 @@ class RouterOsTlsController extends Controller
             return response()->json(['message' => 'Trusted RouterOS SSH known_hosts is not configured.'], 503);
         }
 
+        $managerIp = (string) config('mymate.routeros.tls_manager_ip', '');
+        if (! filter_var($managerIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return response()->json(['message' => 'RouterOS management source IPv4 is not configured.'], 503);
+        }
+
         $device->loadMissing('sshCredential');
         if ($device->sshCredential === null || $device->sshCredential->type !== 'ssh'
             || ! filled($device->sshCredential->private_key)) {
