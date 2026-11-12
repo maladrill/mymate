@@ -55,7 +55,8 @@ export function useDevicePageDevice(id: number) {
             const { data } = await apiClient.get<{ data: Device }>(`/devices/${id}`);
             return data.data;
         },
-        refetchInterval: 30_000,
+        refetchInterval: (query) =>
+            ['queued', 'running'].includes(query.state.data?.routeros_tls?.status ?? '') ? 3000 : 30_000,
         retry: (count, err: unknown) => (err as { response?: { status?: number } })?.response?.status !== 404 && count < 2,
     });
 }
