@@ -42,6 +42,7 @@ class Device extends Model
         'rtt_ms', 'loss_pct', 'ping_at', 'latency_good_ms', 'latency_bad_ms',
         'backup_enabled', 'backup_driver', 'backup_status', 'backup_message', 'backup_at', 'backup_commit',
         'routeros_tls_enrolled_at', 'routeros_tls_expires_at', 'routeros_tls_fingerprint',
+        'routeros_tls_attempted_at', 'routeros_tls_status', 'routeros_tls_error',
         'cmr_device_id', 'cmr_mac', 'cmr_board', 'cmr_os', 'cmr_connected', 'cmr_remote_addr', 'cmr_first_seen', 'cmr_last_seen',
     ];
 
@@ -80,6 +81,7 @@ class Device extends Model
         'upgrade_at' => 'datetime',
         'routeros_tls_enrolled_at' => 'datetime',
         'routeros_tls_expires_at' => 'datetime',
+        'routeros_tls_attempted_at' => 'datetime',
         'discovered_at' => 'datetime',
         'backup_enabled' => 'boolean',
         'backup_status' => BackupStatus::class,
