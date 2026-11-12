@@ -21,6 +21,14 @@ class EvilFreelancerRouterOsClient implements RouterOsClient
                 'pass' => $target->password,
                 'port' => $target->port,
                 'ssl' => $target->ssl,
+                'ssl_options' => [
+                    'ciphers' => 'DEFAULT',
+                    'verify_peer' => true,
+                    'verify_peer_name' => true,
+                    'allow_self_signed' => $target->caFile !== null,
+                    'peer_name' => $target->host,
+                    ...($target->caFile !== null ? ['cafile' => $target->caFile] : []),
+                ],
                 'timeout' => $target->timeout,
                 'attempts' => 1,
             ]);
