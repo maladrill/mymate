@@ -4,6 +4,7 @@ namespace App\Services\RouterOs;
 
 use App\Models\Device;
 use App\Support\EngineLog;
+use Illuminate\Support\Facades\Cache;
 use RuntimeException;
 use Throwable;
 
@@ -20,6 +21,22 @@ class RouterOsTlsProvisioner
     /** @return array{fingerprint:string,expires_at:int} */
     public function enrol(Device $device, string $knownHostsPath): array
     {
+        $lock = Cache::lock('routeros-tls-enrol:'.$device->id, 180);
+        if (! $lock->get()) {
+            throw new RuntimeException('TLS enrollment is already running for this device.');
+        }
+
+        try {
+            return $this->run($device, $knownHostsPath);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /** @return array{fingerprint:string,expires_at:int} */
+    private function run(Device $device, string $knownHostsPath): array
+    {
+        $device->refresh();
         $host = (string) $device->mgmt_ip;
         if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
             throw new RuntimeException('TLS enrollment currently requires an IPv4 management address.');
@@ -45,7 +62,8 @@ class RouterOsTlsProvisioner
         }
 
         $identity = null;
-        $activated = false;
+        $activationAttempted = false;
+        $previouslyDisabled = true;
         $remoteFiles = [];
         try {
             $keyPath = $workDir.'/ssh_identity';
@@ -67,6 +85,16 @@ class RouterOsTlsProvisioner
             $assigned = trim(substr($state, strrpos($state, 'MYMATE_CERT=') + strlen('MYMATE_CERT=')));
             if ($assigned !== '' && strtolower($assigned) !== 'none') {
                 throw new RuntimeException('API-SSL already has a certificate; enrollment will not replace it.');
+            }
+            $disabled = $ssh->execute(':put ("MYMATE_DISABLED=" . [/ip service get [find where name="api-ssl"] disabled])');
+            if (str_contains($disabled, 'MYMATE_DISABLED=false')) {
+                $previouslyDisabled = false;
+            } elseif (! str_contains($disabled, 'MYMATE_DISABLED=true')) {
+                throw new RuntimeException('Unable to read the existing API-SSL service state.');
+            }
+            $port = $ssh->execute(':put ("MYMATE_PORT=" . [/ip service get [find where name="api-ssl"] port])');
+            if (! preg_match('/MYMATE_PORT=8729(?:\s|$)/', $port)) {
+                throw new RuntimeException('API-SSL must listen on TCP port 8729 for enrollment.');
             }
 
             $identity = $this->generator->issue($host, $workDir);
@@ -90,11 +118,13 @@ class RouterOsTlsProvisioner
                 '/ip service set [find where name="api-ssl"] certificate=$certs disabled=no; '.
                 ':put "MYMATE_TLS_APPLIED"';
 
+            // Mark before sending the command: a lost SSH response does not prove
+            // the remote change did not happen.
+            $activationAttempted = true;
             $result = $ssh->execute($script);
             if (! str_contains($result, 'MYMATE_TLS_APPLIED')) {
                 throw new RuntimeException('RouterOS did not confirm API-SSL certificate activation.');
             }
-            $activated = true;
 
             // Verify both the server's self-signed trust anchor and its IP subjectAltName.
             $this->verifyEndpoint($host, $workDir.'/'.$certFile, $identity['fingerprint']);
@@ -108,7 +138,7 @@ class RouterOsTlsProvisioner
             $trustFile = $trustDir.'/device-'.$device->id.'.pem';
             $staged = $trustFile.'.'.bin2hex(random_bytes(8)).'.tmp';
             $this->writePrivateFile($staged, $identity['certificate']);
-            if (! rename($staged, $trustFile)) {
+            if (is_file($trustFile) || ! rename($staged, $trustFile)) {
                 @unlink($staged);
                 throw new RuntimeException('Cannot persist the RouterOS TLS trust anchor.');
             }
@@ -131,11 +161,21 @@ class RouterOsTlsProvisioner
             return ['fingerprint' => $identity['fingerprint'], 'expires_at' => $identity['expires_at']];
         } catch (Throwable $e) {
             // Fail closed and restore the original certificate-less service state.
-            if ($activated) {
+            if ($activationAttempted && isset($ssh)) {
                 try {
-                    $ssh->execute('/ip service set [find where name="api-ssl"] certificate=none disabled=yes');
+                    $ssh->execute('/ip service set [find where name="api-ssl"] certificate=none disabled='.
+                        ($previouslyDisabled ? 'yes' : 'no'));
                 } catch (Throwable) {
                     EngineLog::error('routeros tls: automatic service restoration failed', [
+                        'device_id' => $device->id,
+                    ]);
+                }
+            }
+            if (isset($prefix, $ssh)) {
+                try {
+                    $ssh->execute('/certificate remove [find where common-name="'.$prefix.'"]');
+                } catch (Throwable) {
+                    EngineLog::warning('routeros tls: temporary imported certificate cleanup failed', [
                         'device_id' => $device->id,
                     ]);
                 }
