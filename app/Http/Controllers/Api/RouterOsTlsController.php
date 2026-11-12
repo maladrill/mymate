@@ -47,10 +47,15 @@ class RouterOsTlsController extends Controller
             return response()->json(['message' => 'RouterOS management source IPv4 is not configured.'], 503);
         }
 
-        $device->loadMissing('sshCredential');
-        if ($device->sshCredential === null || $device->sshCredential->type !== 'ssh'
-            || ! filled($device->sshCredential->private_key)) {
-            return response()->json(['message' => 'A dedicated SSH key credential is required.'], 422);
+        $device->loadMissing('sshCredential', 'credential');
+        $credential = $device->sshCredential ?? $device->credential;
+        if ($credential === null
+            || ! in_array($credential->type, ['ssh', 'routeros'], true)
+            || ! filled($credential->username)
+            || (! filled($credential->password) && ! filled($credential->private_key))) {
+            return response()->json([
+                'message' => 'An SSH-usable credential with password or private key is required.',
+            ], 422);
         }
 
         // Row lock makes two simultaneous POSTs unable to enqueue duplicate jobs.
