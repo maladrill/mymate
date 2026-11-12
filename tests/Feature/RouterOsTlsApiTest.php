@@ -84,6 +84,67 @@ class RouterOsTlsApiTest extends TestCase
             ->assertStatus(503);
     }
 
+    public function test_existing_routeros_password_is_accepted_for_first_time_ssh_bootstrap(): void
+    {
+        Queue::fake();
+        $device = $this->device();
+        $device->forceFill(['ssh_credential_id' => null])->save();
+        $knownHosts = sys_get_temp_dir().'/mymate-known-hosts-'.bin2hex(random_bytes(6));
+        file_put_contents($knownHosts, '192.0.2.10 ssh-rsa TEST-ONLY-HOST-KEY');
+        try {
+            config()->set('mymate.routeros.tls_known_hosts', $knownHosts);
+            config()->set('mymate.routeros.tls_manager_ip', '192.0.2.1');
+
+            $admin = $this->verifiedAdmin();
+            $this->actingAs($admin)->withSession(['passkey_verified' => true])
+                ->postJson("/api/devices/{$device->id}/tls-enrol")
+                ->assertStatus(202)
+                ->assertJsonPath('status', 'queued');
+            Queue::assertPushed(RouterOsTlsEnrollJob::class, 1);
+        } finally {
+            @unlink($knownHosts);
+        }
+    }
+
+    public function test_password_only_ssh_credential_is_accepted(): void
+    {
+        Queue::fake();
+        $device = $this->device();
+        $device->sshCredential->update(['private_key' => null, 'password' => 'test-only-password']);
+        $knownHosts = sys_get_temp_dir().'/mymate-known-hosts-'.bin2hex(random_bytes(6));
+        file_put_contents($knownHosts, '192.0.2.10 ssh-rsa TEST-ONLY-HOST-KEY');
+        try {
+            config()->set('mymate.routeros.tls_known_hosts', $knownHosts);
+            config()->set('mymate.routeros.tls_manager_ip', '192.0.2.1');
+            $admin = $this->verifiedAdmin();
+            $this->actingAs($admin)->withSession(['passkey_verified' => true])
+                ->postJson("/api/devices/{$device->id}/tls-enrol")
+                ->assertStatus(202);
+        } finally {
+            @unlink($knownHosts);
+        }
+    }
+
+    public function test_missing_ssh_usable_credential_is_rejected(): void
+    {
+        Queue::fake();
+        $device = $this->device();
+        $device->sshCredential->update(['private_key' => null, 'password' => null]);
+        $knownHosts = sys_get_temp_dir().'/mymate-known-hosts-'.bin2hex(random_bytes(6));
+        file_put_contents($knownHosts, '192.0.2.10 ssh-rsa TEST-ONLY-HOST-KEY');
+        try {
+            config()->set('mymate.routeros.tls_known_hosts', $knownHosts);
+            config()->set('mymate.routeros.tls_manager_ip', '192.0.2.1');
+            $admin = $this->verifiedAdmin();
+            $this->actingAs($admin)->withSession(['passkey_verified' => true])
+                ->postJson("/api/devices/{$device->id}/tls-enrol")
+                ->assertStatus(422);
+            Queue::assertNotPushed(RouterOsTlsEnrollJob::class);
+        } finally {
+            @unlink($knownHosts);
+        }
+    }
+
     public function test_verified_admin_can_queue_exactly_one_enrollment(): void
     {
         Queue::fake();
