@@ -18,6 +18,7 @@ final readonly class RouterOsTarget
         public string $password,
         public int $timeout,
         public bool $ssl,
+        public ?string $caFile = null,
     ) {}
 
     /**
@@ -39,6 +40,24 @@ final readonly class RouterOsTarget
         }
 
         $port = $credential->api_port ?: 8728;
+        $caFile = null;
+        if ($device->routeros_tls_enrolled_at !== null) {
+            $caFile = storage_path('app/routeros-tls/device-'.$device->id.'.pem');
+            if (! is_file($caFile) || ! is_readable($caFile)) {
+                throw new RouterOsClientException('The enrolled RouterOS certificate trust anchor is unavailable.');
+            }
+            $pem = file_get_contents($caFile);
+            $certificate = is_string($pem) ? openssl_x509_read($pem) : false;
+            $actual = $certificate !== false ? openssl_x509_fingerprint($certificate, 'sha256') : false;
+            if (! is_string($actual) || ! hash_equals(
+                (string) $device->routeros_tls_fingerprint, strtolower($actual)
+            )) {
+                throw new RouterOsClientException('The RouterOS trust anchor has been modified.');
+            }
+            $port = 8729;
+        } elseif ($port !== 8729 && (bool) config('mymate.routeros.require_tls', false)) {
+            throw new RouterOsClientException('Plaintext RouterOS API is disabled by security policy.');
+        }
 
         return new self(
             host: $device->mgmt_ip,
@@ -47,6 +66,7 @@ final readonly class RouterOsTarget
             password: (string) $credential->password,
             timeout: max(1, (int) config('mymate.routeros.timeout', 3)),
             ssl: $port === 8729,
+            caFile: $caFile,
         );
     }
 }
