@@ -21,7 +21,7 @@ class RouterOsTlsProvisioner
     /** @return array{fingerprint:string,expires_at:int} */
     public function enrol(Device $device, string $knownHostsPath): array
     {
-        $lock = Cache::lock('routeros-tls-enrol:'.$device->id, 180);
+        $lock = Cache::lock('routeros-tls-enrol:'.$device->id, 900);
         if (! $lock->get()) {
             throw new RuntimeException('TLS enrollment is already running for this device.');
         }
@@ -74,7 +74,7 @@ class RouterOsTlsProvisioner
                 (string) $credential->username,
                 $keyPath,
                 $knownHostsPath,
-                22,
+                (int) config('mymate.routeros.tls_ssh_port', 22),
             );
 
             // Do not replace certificates that an administrator may already rely on.
@@ -87,9 +87,9 @@ class RouterOsTlsProvisioner
                 throw new RuntimeException('API-SSL already has a certificate; enrollment will not replace it.');
             }
             $disabled = $ssh->execute(':put ("MYMATE_DISABLED=" . [/ip service get [find where name="api-ssl"] disabled])');
-            if (str_contains($disabled, 'MYMATE_DISABLED=false')) {
+            if (preg_match('/MYMATE_DISABLED=(?:false|no)(?:\s|$)/i', $disabled) === 1) {
                 $previouslyDisabled = false;
-            } elseif (! str_contains($disabled, 'MYMATE_DISABLED=true')) {
+            } elseif (preg_match('/MYMATE_DISABLED=(?:true|yes)(?:\s|$)/i', $disabled) !== 1) {
                 throw new RuntimeException('Unable to read the existing API-SSL service state.');
             }
             $port = $ssh->execute(':put ("MYMATE_PORT=" . [/ip service get [find where name="api-ssl"] port])');
