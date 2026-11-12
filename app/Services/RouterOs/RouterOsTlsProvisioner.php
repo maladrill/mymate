@@ -51,10 +51,16 @@ class RouterOsTlsProvisioner
             throw new RuntimeException('A specific RouterOS API-SSL manager source IPv4 is required.');
         }
 
-        $device->loadMissing('sshCredential');
-        $credential = $device->sshCredential;
-        if ($credential === null || $credential->type !== 'ssh' || ! filled($credential->private_key)) {
-            throw new RuntimeException('A dedicated SSH credential with a private key is required.');
+        // A dedicated SSH credential takes precedence. For a new CPE, the existing
+        // RouterOS user/password may also be SSH-usable; no preinstalled SSH user key
+        // is required as long as the host key was authenticated out-of-band.
+        $device->loadMissing('sshCredential', 'credential');
+        $credential = $device->sshCredential ?? $device->credential;
+        if ($credential === null
+            || ! in_array($credential->type, ['ssh', 'routeros'], true)
+            || ! filled($credential->username)
+            || (! filled($credential->private_key) && ! filled($credential->password))) {
+            throw new RuntimeException('An SSH-usable username and password or private key are required.');
         }
 
         // Restrict all working files, including the SSH identity, to Linux tmpfs.
@@ -73,13 +79,11 @@ class RouterOsTlsProvisioner
         $previousAcl = '';
         $remoteFiles = [];
         try {
-            $keyPath = $workDir.'/ssh_identity';
-            $this->writePrivateFile($keyPath, (string) $credential->private_key);
-
             $ssh = new RouterOsPinnedSsh(
                 $host,
                 (string) $credential->username,
-                $keyPath,
+                (string) ($credential->private_key ?? ''),
+                (string) ($credential->password ?? ''),
                 $knownHostsPath,
                 (int) config('mymate.routeros.tls_ssh_port', 22),
             );
