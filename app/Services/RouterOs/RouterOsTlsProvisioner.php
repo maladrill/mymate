@@ -45,6 +45,12 @@ class RouterOsTlsProvisioner
             throw new RuntimeException('The device is already enrolled; certificate rotation requires a separate operation.');
         }
 
+        $managerIp = (string) config('mymate.routeros.tls_manager_ip', '');
+        if (filter_var($managerIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false
+            || in_array($managerIp, ['0.0.0.0', '255.255.255.255'], true)) {
+            throw new RuntimeException('A specific RouterOS API-SSL manager source IPv4 is required.');
+        }
+
         $device->loadMissing('sshCredential');
         $credential = $device->sshCredential;
         if ($credential === null || $credential->type !== 'ssh' || ! filled($credential->private_key)) {
@@ -64,6 +70,7 @@ class RouterOsTlsProvisioner
         $identity = null;
         $activationAttempted = false;
         $previouslyDisabled = true;
+        $previousAcl = '';
         $remoteFiles = [];
         try {
             $keyPath = $workDir.'/ssh_identity';
@@ -97,6 +104,21 @@ class RouterOsTlsProvisioner
                 throw new RuntimeException('API-SSL must listen on TCP port 8729 for enrollment.');
             }
 
+            $addresses = $ssh->execute(':put ("MYMATE_ADDR=" . [/ip service get [find where name="api-ssl"] address])');
+            if (! str_contains($addresses, 'MYMATE_ADDR=')) {
+                throw new RuntimeException('Unable to read the existing API-SSL allow-list.');
+            }
+            $previousAcl = trim(substr($addresses, strrpos($addresses, 'MYMATE_ADDR=') + strlen('MYMATE_ADDR=')));
+            if (strlen($previousAcl) > 1024 || ! preg_match('/^[0-9a-fA-F:.,\/ ]*$/D', $previousAcl)) {
+                throw new RuntimeException('The existing API-SSL allow-list is not safely parseable.');
+            }
+            // Preserve specific, existing admin ACL entries. Never preserve a
+            // wildcard ACL on a newly activated management interface.
+            $newAcl = ($previousAcl === '' || str_contains($previousAcl, '0.0.0.0/0')
+                || str_contains($previousAcl, '::/0'))
+                ? $managerIp.'/32'
+                : $previousAcl.','.$managerIp.'/32';
+
             $identity = $this->generator->issue($host, $workDir);
             $prefix = $identity['name'];
             $certFile = $prefix.'.crt';
@@ -115,7 +137,7 @@ class RouterOsTlsProvisioner
 
             $script = ':local certs [/certificate find where common-name="'.$prefix.'"]; '.
                 ':if ([:len $certs] != 1) do={:error "Certificate not found or ambiguous"}; '.
-                '/ip service set [find where name="api-ssl"] certificate=$certs disabled=no; '.
+                '/ip service set [find where name="api-ssl"] certificate=$certs address="'.$newAcl.'" disabled=no; '.
                 ':put "MYMATE_TLS_APPLIED"';
 
             // Mark before sending the command: a lost SSH response does not prove
@@ -163,8 +185,8 @@ class RouterOsTlsProvisioner
             // Fail closed and restore the original certificate-less service state.
             if ($activationAttempted && isset($ssh)) {
                 try {
-                    $ssh->execute('/ip service set [find where name="api-ssl"] certificate=none disabled='.
-                        ($previouslyDisabled ? 'yes' : 'no'));
+                    $ssh->execute('/ip service set [find where name="api-ssl"] certificate=none address="'.
+                        $previousAcl.'" disabled='.($previouslyDisabled ? 'yes' : 'no'));
                 } catch (Throwable) {
                     EngineLog::error('routeros tls: automatic service restoration failed', [
                         'device_id' => $device->id,
