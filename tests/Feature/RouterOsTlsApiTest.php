@@ -92,6 +92,7 @@ class RouterOsTlsApiTest extends TestCase
         file_put_contents($knownHosts, '192.0.2.10 ssh-rsa TEST-ONLY-HOST-KEY');
         try {
             config()->set('mymate.routeros.tls_known_hosts', $knownHosts);
+            config()->set('mymate.routeros.tls_manager_ip', '192.0.2.1');
             $admin = $this->verifiedAdmin();
             $this->actingAs($admin)->withSession(['passkey_verified' => true]);
 
