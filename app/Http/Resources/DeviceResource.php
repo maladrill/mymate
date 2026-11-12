@@ -68,6 +68,9 @@ class DeviceResource extends JsonResource
                 'enrolled_at' => $this->routeros_tls_enrolled_at,
                 'expires_at' => $this->routeros_tls_expires_at,
                 'fingerprint' => $this->routeros_tls_fingerprint,
+                'status' => $this->routeros_tls_status,
+                'attempted_at' => $this->routeros_tls_attempted_at,
+                'error' => $this->routeros_tls_error,
             ],
             // Firmware upgrade tracking.
             'os_version' => $this->os_version,
