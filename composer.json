@@ -13,7 +13,8 @@
         "laravel/passkeys": "^0.2.1",
         "laravel/reverb": "^1.10",
         "laravel/sanctum": "^4.3",
-        "laravel/tinker": "^3.0"
+        "laravel/tinker": "^3.0",
+        "phpseclib/phpseclib": "^3.0.58"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

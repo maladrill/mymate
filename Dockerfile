@@ -60,7 +60,7 @@ FROM docker.io/library/php:8.4.27-fpm-bookworm AS runtime
 # the Tools ping (the slim base image has no ping).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        nginx supervisor tini postgresql-client procps libcap2-bin ca-certificates git mtr-tiny iputils-ping \
+        nginx supervisor tini postgresql-client procps libcap2-bin ca-certificates git mtr-tiny iputils-ping openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Every My Mate process (php-fpm, Horizon, Reverb, the loop, the scheduler, the agent hub, and the

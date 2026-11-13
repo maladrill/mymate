@@ -41,6 +41,7 @@ use App\Http\Controllers\Api\PasskeyController;
 use App\Http\Controllers\Api\ProbeController;
 use App\Http\Controllers\Api\PublicWallController;
 use App\Http\Controllers\Api\RouterosUpgradeController;
+use App\Http\Controllers\Api\RouterOsTlsController;
 use App\Http\Controllers\Api\SecuritySettingController;
 use App\Http\Controllers\Api\SensorController;
 use App\Http\Controllers\Api\SettingController;
@@ -190,6 +191,8 @@ Route::middleware(['auth:sanctum', EnsurePasskeyVerified::class, RestrictWritesT
     // Up/down/unknown tallies for the header (GitHub #22). Also before the resource.
     Route::get('devices/stats', [DeviceController::class, 'stats'])->name('devices.stats');
     Route::get('devices/versions', [DeviceController::class, 'versions'])->name('devices.versions');
+    Route::post('devices/{device}/tls-enrol', [RouterOsTlsController::class, 'store'])
+        ->middleware(['admin', 'throttle:3,1'])->name('devices.tls.enrol');
     Route::apiResource('devices', DeviceController::class);
 
     // A device's interfaces (link binder picks each end from these).

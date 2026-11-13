@@ -8,6 +8,7 @@ import { fmtBytes, fmtDuration, fmtValue } from '../lib/format';
 import { openDevicePage, setQuery, showOnMap } from '../lib/location';
 import { HistoryGraph } from './HistoryGraph';
 import { Card, Detail, Empty } from './ui';
+import { RouterOsTlsPanel } from './RouterOsTlsPanel';
 import type { Device } from '../../../types';
 
 const pollLabel: Record<string, string> = { snmp: 'SNMP', routeros: 'RouterOS API', none: 'Ping only' };
@@ -223,6 +224,7 @@ export function OverviewTab({ device, summary }: { device: Device; summary: Devi
             </div>
 
             <Resources device={device} />
+            {device.poll_method === 'routeros' && <RouterOsTlsPanel device={device} />}
 
             <Card title="Last 24 hours" right={<button type="button" onClick={() => setQuery({ tab: 'graphs' }, { push: true })} className="text-xs text-emerald-300/90 hover:underline">All graphs</button>}>
                 {!catalog ? (

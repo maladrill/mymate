@@ -98,6 +98,16 @@ export interface Device {
     arch: string | null;
     uptime_seconds: number | null;
     uptime_at: string | null;
+    // RouterOS API-SSL server-side certificate enrollment status.
+    routeros_tls?: {
+        enrolled: boolean;
+        enrolled_at: string | null;
+        expires_at: string | null;
+        fingerprint: string | null;
+        status: 'queued' | 'running' | 'verified' | 'failed' | null;
+        attempted_at: string | null;
+        error: string | null;
+    };
     // Firmware upgrade tracking.
     os_version: string | null;
     latest_version: string | null;

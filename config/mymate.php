@@ -417,6 +417,14 @@ return [
     // API port (e.g. BDR1:8728) fails fast instead of wedging a worker.
     'routeros' => [
         'timeout' => (int) env('MYMATE_ROUTEROS_TIMEOUT', 3), // seconds
+        // Fail closed: prohibit plaintext API when working with production CPE credentials.
+        'require_tls' => (bool) env('MYMATE_ROUTEROS_REQUIRE_TLS', env('APP_ENV', 'production') === 'production'),
+        // Must be populated with host keys verified independently of this connection.
+        'tls_known_hosts' => env('MYMATE_ROUTEROS_SSH_KNOWN_HOSTS', ''),
+        'tls_ssh_port' => (int) env('MYMATE_ROUTEROS_SSH_PORT', 22),
+        // Management source address actually used by My Mate on the CPE-facing network.
+        'tls_manager_ip' => env('MYMATE_ROUTEROS_MANAGER_IP', ''),
+
     ],
 
     // Remote agents (probes on a customer's management network). The hub pings each connected

@@ -62,6 +62,16 @@ class DeviceResource extends JsonResource
             'arch' => $this->arch,
             'uptime_seconds' => $this->uptime_seconds,
             'uptime_at' => $this->uptime_at,
+            // TLS trust metadata only; never return private keys or SSH credentials.
+            'routeros_tls' => [
+                'enrolled' => $this->routeros_tls_enrolled_at !== null,
+                'enrolled_at' => $this->routeros_tls_enrolled_at,
+                'expires_at' => $this->routeros_tls_expires_at,
+                'fingerprint' => $this->routeros_tls_fingerprint,
+                'status' => $this->routeros_tls_status,
+                'attempted_at' => $this->routeros_tls_attempted_at,
+                'error' => $this->routeros_tls_error,
+            ],
             // Firmware upgrade tracking.
             'os_version' => $this->os_version,
             'latest_version' => $this->latest_version,
